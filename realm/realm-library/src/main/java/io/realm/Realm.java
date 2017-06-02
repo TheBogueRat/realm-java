@@ -397,11 +397,7 @@ public class Realm extends BaseRealm {
 
             // Initializes Realm schema if needed.
             try {
-                if (!syncingConfig) {
-                    initializeRealm(realm);
-                } else {
-                    initializeSyncedRealm(realm);
-                }
+                initializeRealm(realm);
             } catch (RuntimeException e) {
                 realm.doClose();
                 throw e;
@@ -421,23 +417,35 @@ public class Realm extends BaseRealm {
             // interprocess lock. This lock can obviously not be created by a Realm instance so we probably need
             // to implement it in Object Store. When this happens, the `beginTransaction(true)` can be removed again.
             realm.beginTransaction(true);
+            RealmConfiguration configuration = realm.getConfiguration();
             long currentVersion = realm.getVersion();
             boolean unversioned = currentVersion == UNVERSIONED;
-            commitChanges = unversioned;
+            long newVersion = configuration.getSchemaVersion();
 
-            RealmConfiguration configuration = realm.getConfiguration();
             RealmProxyMediator mediator = configuration.getSchemaMediator();
             Set<Class<? extends RealmModel>> modelClasses = mediator.getModelClasses();
 
-            // Only allow creating the schema if not in read-only mode
-            if (unversioned) {
-                if (configuration.isReadOnly()) {
-                    throw new IllegalArgumentException("Cannot create the Realm schema in a read-only file.");
-                }
+            if (configuration.isSyncConfiguration()) {
+                // Update/create the schema if allowed
+                if (!configuration.isReadOnly()) {
+                    OsSchemaInfo schema = new OsSchemaInfo(mediator.getExpectedObjectSchemaInfoList());
 
-                // Let Object Store initialize all tables
-                OsSchemaInfo schemaInfo = new OsSchemaInfo(mediator.getExpectedObjectSchemaInfoList());
-                realm.sharedRealm.updateSchema(schemaInfo, configuration.getSchemaVersion());
+                    // Object Store handles all update logic
+                    realm.sharedRealm.updateSchema(schema, newVersion);
+                    commitChanges = true;
+                }
+            } else {
+                // Only allow creating the schema if not in read-only mode
+                if (unversioned) {
+                    if (configuration.isReadOnly()) {
+                        throw new IllegalArgumentException("Cannot create the Realm schema in a read-only file.");
+                    }
+
+                    // Let Object Store initialize all tables
+                    OsSchemaInfo schemaInfo = new OsSchemaInfo(mediator.getExpectedObjectSchemaInfoList());
+                    realm.sharedRealm.updateSchema(schemaInfo, newVersion);
+                    commitChanges = true;
+                }
             }
 
             // Now that they have all been created, validate them.
@@ -445,11 +453,13 @@ public class Realm extends BaseRealm {
             for (Class<? extends RealmModel> modelClass : modelClasses) {
                 String className = Table.getClassNameForTable(mediator.getTableName(modelClass));
                 Pair<Class<? extends RealmModel>, String> key = Pair.<Class<? extends RealmModel>, String>create(modelClass, className);
-                columnInfoMap.put(key, mediator.validateTable(modelClass, realm.sharedRealm, false));
+                // More fields in the Realm than defined is allowed for synced Realm.
+                columnInfoMap.put(key, mediator.validateTable(modelClass, realm.sharedRealm,
+                        configuration.isSyncConfiguration()));
             }
 
             realm.getSchema().setInitialColumnIndices(
-                    (unversioned) ? configuration.getSchemaVersion() : currentVersion,
+                    (unversioned) ? newVersion : currentVersion,
                     columnInfoMap);
 
             // Finally add any initial data
@@ -464,62 +474,6 @@ public class Realm extends BaseRealm {
             if (commitChanges) {
                 realm.commitTransaction();
             } else if (realm.isInTransaction()) {
-                realm.cancelTransaction();
-            }
-        }
-    }
-
-    // Everything in this method needs to be behind a transaction lock
-    // to prevent multi-process interaction while the Realm is initialized.
-    private static void initializeSyncedRealm(Realm realm) {
-        boolean commitChanges = false;
-        try {
-            // We need to start a transaction no matter readOnly mode, because it acts as an interprocess lock.
-            // TODO: For proper inter-process support we also need to move e.g copying the asset file under an
-            // interprocess lock. This lock can obviously not be created by a Realm instance so we probably need
-            // to implement it in Object Store. When this happens, the `beginTransaction(true)` can be removed again.
-            realm.beginTransaction(true);
-            long currentVersion = realm.getVersion();
-            final boolean unversioned = currentVersion == UNVERSIONED;
-
-            RealmConfiguration configuration = realm.getConfiguration();
-
-            final RealmProxyMediator mediator = configuration.getSchemaMediator();
-            final Set<Class<? extends RealmModel>> modelClasses = mediator.getModelClasses();
-
-            long newVersion = configuration.getSchemaVersion();
-
-            // Update/create the schema if allowed
-            if (!configuration.isReadOnly()) {
-                OsSchemaInfo schema = new OsSchemaInfo(mediator.getExpectedObjectSchemaInfoList());
-
-                // Object Store handles all update logic
-                realm.sharedRealm.updateSchema(schema, newVersion);
-                commitChanges = true;
-            }
-
-            // Validate the schema in the file
-            final Map<Pair<Class<? extends RealmModel>, String>, ColumnInfo> columnInfoMap = new HashMap<>(modelClasses.size());
-            for (Class<? extends RealmModel> modelClass : modelClasses) {
-                String className = Table.getClassNameForTable(mediator.getTableName(modelClass));
-                Pair<Class<? extends RealmModel>, String> key = Pair.<Class<? extends RealmModel>, String>create(modelClass, className);
-                columnInfoMap.put(key, mediator.validateTable(modelClass, realm.sharedRealm, true));
-            }
-            realm.getSchema().setInitialColumnIndices((unversioned) ? newVersion : currentVersion, columnInfoMap);
-
-            if (unversioned && !configuration.isReadOnly()) {
-                final Transaction transaction = configuration.getInitialDataTransaction();
-                if (transaction != null) {
-                    transaction.execute(realm);
-                }
-            }
-        } catch (RuntimeException e) {
-            commitChanges = false;
-            throw e;
-        } finally {
-            if (commitChanges) {
-                realm.commitTransaction();
-            } else {
                 realm.cancelTransaction();
             }
         }
