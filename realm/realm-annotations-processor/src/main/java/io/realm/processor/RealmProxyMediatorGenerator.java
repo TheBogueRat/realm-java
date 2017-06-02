@@ -81,7 +81,6 @@ public class RealmProxyMediatorGenerator {
                 "io.realm.internal.RealmProxyMediator",
                 "io.realm.internal.Row",
                 "io.realm.internal.Table",
-                "io.realm.RealmObjectSchema",
                 "io.realm.internal.OsObjectSchemaInfo",
                 "org.json.JSONException",
                 "org.json.JSONObject"
@@ -98,7 +97,6 @@ public class RealmProxyMediatorGenerator {
         writer.emitEmptyLine();
 
         emitFields(writer);
-        emitCreateRealmObjectSchema(writer);
         emitGetExpectedObjectSchemaInfoList(writer);
         emitValidateTableMethod(writer);
         emitGetFieldNamesMethod(writer);
@@ -126,24 +124,6 @@ public class RealmProxyMediatorGenerator {
         }
         writer.emitStatement("MODEL_CLASSES = Collections.unmodifiableSet(modelClasses)");
         writer.endInitializer();
-        writer.emitEmptyLine();
-    }
-
-    private void emitCreateRealmObjectSchema(JavaWriter writer) throws IOException {
-        writer.emitAnnotation("Override");
-        writer.beginMethod(
-                "RealmObjectSchema",
-                "createRealmObjectSchema",
-                EnumSet.of(Modifier.PUBLIC),
-                "Class<? extends RealmModel>", "clazz", "RealmSchema", "realmSchema"
-        );
-        emitMediatorShortCircuitSwitch(new ProxySwitchStatement() {
-            @Override
-            public void emitStatement(int i, JavaWriter writer) throws IOException {
-                writer.emitStatement("return %s.createRealmObjectSchema(realmSchema)", qualifiedProxyClasses.get(i));
-            }
-        }, writer);
-        writer.endMethod();
         writer.emitEmptyLine();
     }
 

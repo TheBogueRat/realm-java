@@ -81,12 +81,6 @@ public class FilterableMediator extends RealmProxyMediator {
     }
 
     @Override
-    public RealmObjectSchema createRealmObjectSchema(Class<? extends RealmModel> clazz, RealmSchema schema) {
-        checkSchemaHasClass(clazz);
-        return originalMediator.createRealmObjectSchema(clazz, schema);
-    }
-
-    @Override
     public List<OsObjectSchemaInfo> getExpectedObjectSchemaInfoList() {
         List<OsObjectSchemaInfo> infoList = new ArrayList<OsObjectSchemaInfo>();
         for (OsObjectSchemaInfo objectSchemaInfo : originalMediator.getExpectedObjectSchemaInfoList()) {
